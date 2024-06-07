@@ -1,0 +1,164 @@
+---
+jupyter:
+  jupytext:
+    notebook_metadata_filter: all,-language_info
+    split_at_heading: true
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.16.0
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+# Maximum likelihood for election problem
+
+```{python}
+import numpy as np
+import scipy.stats as sps
+
+rnd = np.random.default_rng()
+```
+
+Here are the observed counts and percentages for the three candidates (Bush, Perot, Clinton):
+
+```{python}
+sample_votes = np.array([270, 225, 210])
+n_voters = np.sum(sample_votes)
+sample_proportions = sample_votes / n_voters
+# Show the proportions in the sample.
+np.round(sample_proportions, 3)
+```
+
+We are first interested in all benchmark universes where Bush had less than or equal to the vote proportion of one or other candidate.
+
+We collect those — using integers for the percentages:
+
+```{python}
+# Our benchmark universes are all those where Bush has
+# <= percent of another candidate.
+benchmark_universes = []
+for bush_no in range(0, 51):
+    remaining = 100 - bush_no
+    for perot_no in range(0, remaining + 1):
+        clinton_no = remaining - perot_no
+        if bush_no <= perot_no or bush_no <= clinton_no:
+            benchmark_universes.append([bush_no, perot_no, clinton_no])
+benchmark_universes = np.array(benchmark_universes)
+# Convert to proportions.
+benchmark_universes = benchmark_universes / 100
+benchmark_universes
+```
+
+We can then go through each universe, and ask how likely the observed counts would arise in that universe.  We're interest to find the benchmark universe, among all possible universes, that has is most likely to generate the observed results (counts, percentages).
+
+Do this, we could use simulation - taking samples from each universe, repeatedly, to see how often we see the observed counts.  For example, to test the benchmark universe of most immediate interest to us:
+
+```{python}
+one_bench_universe = np.array([0.35, 0.35, 0.30])
+```
+
+Here we do repeated sampling from the first benchmark universe to see how often
+that generates the vote totals we saw in the real world.
+
+```{python}
+# This cell takes about a minute on my laptop.
+n_same_votes = 0
+# Lots of samples, because the probability will be very small.
+n_trials = 1_000_000
+for i in range(n_trials):
+    # Draw a sample.
+    samp = rnd.choice(['Bush', 'Perot', 'Clinton'],
+                      p=one_bench_universe,
+                      size=n_voters)
+    # Calculate vote counts for each candidate.
+    n_bush = np.sum(samp == 'Bush')
+    n_perot = np.sum(samp == 'Perot')
+    n_clinton = np.sum(samp == 'Clinton')
+    # Collect them to compare to actual vote counts.
+    n_all = np.array([n_bush, n_perot, n_clinton])
+    # Are they the same as the actual vote counts?
+    if np.all(n_all == sample_votes):  # Same as real sample:
+        n_same_votes = n_same_votes + 1
+
+p_same = n_same_votes / n_trials
+p_same
+```
+
+This is a little time-consuming.  We can use a mathematical short-cut to get this same result, using Scipy's `multinomial` distribution, like this:
+
+```{python}
+# A distribution with the given number of voters and probabilities.
+mdist = sps.multinomial(n_voters, one_bench_universe)
+# What is the probability of seeing exactly the observed votes?
+mdist.pmf([270, 225, 210])
+```
+
+Notice these two calculations give very similar values, but the multinomial
+calculation is a) precise - it doesn't depend on randomness and b) much
+quicker.
+
+Notice too that the number we get is very small, because there are so many
+different vote numbers that could result, so the chances of getting exactly
+these numbers is small.
+
+One way of making sure that the computer doesn't run into trouble with these small numbers is asking for the `logpmf`, which is just the logarithm of the same number you saw above:
+
+```{python}
+lpmf = mdist.logpmf([270, 225, 210])
+lpmf
+```
+
+We can convert the logarithm back to the probability by using `np.exp`:
+
+```{python}
+# Convert the log back into the probability, giving the same
+# answer as above.
+np.exp(lpmf)
+```
+
+Using the logarithm instead of the original probability helps by keeping the
+numbers from getting so small that the computer will struggle to make accurate
+calculations, while keeping the numbers comparable.  If the original
+probability is greater than another probability for a different benchmark
+universe, the logarithm is also greater.
+
+
+We can then get the `logpmf` calculation for all our proposed benchmark
+universes. The benchmark universe with the highest `logpmf` is also the
+benchmark universe with the highest probability of giving the exact observed
+vote counts from the sample.
+
+```{python}
+n_benchmark_universes = len(benchmark_universes)
+bench_universe_logp_obs = np.zeros(n_benchmark_universes)
+for i in np.arange(n_benchmark_universes):
+    # Multinomial distribution.
+    mdist = sps.multinomial(n_voters, benchmark_universes[i])
+    # How likely are the observed numbers, if benchmark holds.
+    bench_universe_logp_obs[i] = mdist.logpmf([270, 225, 210])
+```
+
+The largest log probability:
+
+```{python}
+np.max(bench_universe_logp_obs)
+```
+
+```{python}
+# The corresponding index position of the maximum.
+index = np.argmax(bench_universe_logp_obs)
+# So this will give us the maximum again.
+bench_universe_logp_obs[index]
+```
+
+```{python}
+# The benchmark universe (triplet of proportions) most likely to generate
+# the observed vote totals:
+benchmark_universes[index]
+```
+
+So the [0.35, 0.35, 0.3] benchmark universe is the one most compatible with the observed votes, while still having Bush less than or equal to another candidate.
